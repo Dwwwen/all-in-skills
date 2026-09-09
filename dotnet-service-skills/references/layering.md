@@ -50,10 +50,12 @@ the grain's cancel path, a quota-exhausted path, a background sweeper. Splitting
 one state machine two homes, and "only one place can change state" is exactly its value:
 *illegal transitions throw* only holds while there is a single entry point.
 
-One-line methods still go through Implementation when they carry a rule:
+One-line methods still go through Implementation when they carry a rule — here,
+monotonicity:
 
 ```csharp
-public static Job MarkRefunding(Job job) => job with { RefundState = RefundState.Refunding };
+public static Job AdvanceCursor(Job job, long seq) =>
+    seq > job.Cursor ? job with { Cursor = seq } : job;
 ```
 
 The cost is one indirection; the return is that every state change is greppable in one file.
@@ -91,6 +93,14 @@ public static class StepStageNames
 Read-side queries project the stored string straight to the client, while the grain DTO
 goes through the in-memory aggregate. If the two drift, the same object shows a different
 status on two endpoints.
+
+Put the constants next to the union. They are the union's outward vocabulary, and keeping
+them adjacent is what stops a new case from being added without a name. The *mapping* from
+case to name still lives in each conversion — only the strings are shared.
+
+This is a deliberate exception to "the domain does not know how it is displayed": the names
+have to be visible to every layer that projects them, so moving the file only lengthens the
+reference chain while making case-and-name drift easier.
 
 ## Reads and writes are separate paths
 

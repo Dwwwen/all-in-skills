@@ -23,7 +23,8 @@ and be cancelled.
    of the same truth will drift, and a missed sync raises nothing.
 
 3. **The domain does not know how it is stored or displayed.**
-   Names, discriminators and concurrency tokens belong to the conversion layer.
+   Discriminators, concurrency tokens and the mapping to wire names belong to the
+   conversion layer. (The name *constants* are the one exception — see `layering.md`.)
 
 4. **Each site asks only what it needs.**
    General-purpose getters and pass-through properties are back doors around the type.
