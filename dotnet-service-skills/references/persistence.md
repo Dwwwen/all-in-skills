@@ -1,16 +1,20 @@
-# Persistence: EF Core over immutable aggregates
+# Persistence
 
-## Rows are separate from the domain
+Rules here hold for any store. Examples are EF Core over a relational database because the
+rest of this skill is .NET; a document store hits the same problems through different APIs,
+and the places where it changes the answer are called out.
 
-The domain is an immutable record; EF wants a mutable, trackable, all-columns class.
-**One class must not be both.**
+## The stored shape is not the domain shape
+
+The domain is an immutable record. Every store wants the opposite: mutable, settable
+throughout, carrying ids and version tokens. **One class must not be both.**
 
 ```csharp
-internal sealed class JobStepRow      // internal: business code never sees a column
+internal sealed class JobStepRow      // internal: business code never sees a stored field
 {
     public Guid Id { get; set; }
     public string Stage { get; set; } = StepStageNames.Pending;   // discriminator
-    public DateTimeOffset? DispatchRequestedAt { get; set; }      // payload columns
+    public DateTimeOffset? DispatchRequestedAt { get; set; }      // payload
     public int Attempts { get; set; }
     public string? ResultPath { get; set; }
     public string? Error { get; set; }
@@ -18,118 +22,120 @@ internal sealed class JobStepRow      // internal: business code never sees a co
 }
 ```
 
-**Storage does not mirror the union.** A `(Stage, CreatedAt)` index and `Stage IN (...)`
-filters both need a single comparable discriminator column. The nullable columns cannot be
-designed away — but they are confined to `RowConversions`, and invisible past that door.
+**Storage does not mirror the union**, even where the store could hold one. Filtering by
+state — a sweep query, `Stage IN (...)`, an index on `(Stage, CreatedAt)` — needs one
+comparable discriminator field. A document store can nest the payload under the
+discriminator instead of flattening it; what does not change is that the discriminator is
+a single indexed field.
 
-Name the discriminator with the **domain word** (`Stage`, not `Status`). A mismatch here
-usually means a deleted concept is still casting a shadow. The outward JSON field name is
-a separate question: that is a published contract and changing it is its own decision.
+The nullable payload fields cannot be designed away. They are confined to the conversion
+layer and invisible past that door — `pattern-matching.md` covers why the discriminator and
+its payload must come out of a single switch.
 
-## The repository over an immutable aggregate
+Name the discriminator with the **domain word** (`Stage`, not `Status`). A mismatch usually
+means a deleted concept is still casting a shadow. The outward JSON field name is a separate
+question: that is a published contract, and changing it is its own decision.
 
-`Save` **must take the aggregate**. With a mutable model it relied on the implicit
-contract "what the caller mutated is the tracked instance"; once the aggregate is a record
-that no longer holds — and it was implicit all along, so anyone could have missed it.
+## The repository takes the aggregate
+
+`Save` **must take the aggregate as an argument.**
+
+With a mutable model, an argument-less `Save()` worked by an implicit contract: *what the
+caller mutated is the instance the store is holding*. Once the aggregate is an immutable
+record that is simply false — every change produces a new instance and the store cannot know
+which one the caller has. The contract was implicit all along, so nothing warned when it
+stopped being true.
 
 ```csharp
 public async Task<int> Save(Job job, CancellationToken ct = default)
-{
-    var row = db.ChangeTracker.Entries<JobRow>()
-        .Select(e => e.Entity)
-        .FirstOrDefault(r => r.JobId == job.JobId);
-
-    if (row is null)                       // never tracked = new aggregate
-    {
-        var inserted = job.ToRow();
-        inserted.Version = 1;
-        inserted.Steps.AddRange(job.Steps.Select(s => s.ToRow()));
-        db.Jobs.Add(inserted);
-        return await db.SaveChangesAsync(ct);
-    }
-
-    job.WriteTo(row);
-    SyncSteps(job, row);
-
-    // The version follows the root only: frequent small child writes should not bump it
-    db.ChangeTracker.DetectChanges();
-    if (db.Entry(row).State == EntityState.Modified) row.Version++;
-
-    return await db.SaveChangesAsync(ct);
-}
 ```
 
 **The concurrency token stays out of the domain.** An aggregate should not know how many
-times it has been stored; when a caller needs it, hand back a tuple (`(Job, string ETag)`)
-rather than a field on the aggregate.
+times it has been stored. When a caller needs it, hand back a tuple (`(Job, string ETag)`)
+rather than putting a field on the aggregate.
 
-## Pre-generated keys must be marked Added explicitly
+Advance the version **for changes to the root only**. A frequent, small child write — a
+heartbeat recording "last heard from at" — should not push the aggregate's version, or every
+reader collides over progress that concerns none of them.
 
-`Guid.CreateVersion7()` produces a non-default primary key. When EF discovers such an
-entity only through a tracked navigation it treats it as `Modified` — so the INSERT becomes
-an UPDATE that matches no rows, and the data is silently lost.
+## Pre-generated ids defeat "is this new?"
+
+Stores decide insert-versus-update by asking whether the key looks unset. Generate ids in
+the domain (`Guid.CreateVersion7()`, so they also sort by creation time) and that heuristic
+inverts: a brand-new child looks like an existing one, and the insert becomes an update that
+matches nothing. **Nothing throws** — the row is simply never written.
+
+The authority is the aggregate, not the key:
 
 ```csharp
+// "present in the aggregate, absent from the stored children" is what makes it new
 var added = step.ToRow();
 row.Steps.Add(added);
-db.Entry(added).State = EntityState.Added;   // "in the aggregate, not in the rows" is the authority
+db.Entry(added).State = EntityState.Added;
 ```
 
-## EF translation traps
+Same shape elsewhere: a document driver will happily upsert by `_id`. Say insert when you
+mean insert.
 
-**`.Contains` on an array does not translate.** It binds to
-`MemoryExtensions.Contains(ReadOnlySpan<T>, T)`, which EF does not recognise. Declare it
-as `IReadOnlyList<>`:
+## Query predicates must survive translation
+
+A predicate that works in memory does not necessarily translate to the store's query
+language. The failure is either a runtime exception or — worse — silent client-side
+evaluation that pulls the whole collection into the process.
+
+The trap is that an overload chosen at compile time decides it:
 
 ```csharp
+// As an array this binds to MemoryExtensions.Contains(ReadOnlySpan<T>, T), which EF
+// cannot translate. Declared as IReadOnlyList<>, it becomes Stage IN ('Pending', ...).
 public static readonly IReadOnlyList<string> Active = [Pending, Queued, Running, Cancelling];
-// EF translates this to Stage IN ('Pending', 'Queued', ...)
 ```
 
-**Map enum columns with `HasConversion<string>()`**, never the ordinal — inserting an enum
-member renumbers everything after it. If the discriminator is already a `string`, no
-conversion is needed and the column type is unchanged (`varchar(16)`).
+So: stay inside the vocabulary the provider documents, and **execute each query against the
+store in a test**. A unit test over `IEnumerable` proves nothing about translation.
 
-## A migration safety gate
+## Never persist an enum by its ordinal
 
-By default EF scaffolds renames as `DropTable + CreateTable` / `DropColumn + AddColumn`,
-leaving one line in the build log and blocking nothing. That kind of loss **raises no
-error** — by the time anyone notices, there is nothing to recover.
-
-Put the gate **inside the program that runs migrations** (not in a test), so local, CI and
-production all pass through it:
+Insert a member in the middle and every value after it silently changes meaning, in every
+record already written.
 
 ```csharp
-// Inspect MigrationOperations; destructive ones must be on the allow-list
-"DropRedundantQueueStatus:DropColumn:job.QueueStatus",
+entity.Property(e => e.Status).HasConversion<string>();
 ```
 
-Rules:
-- Renames always use `RenameTable` / `RenameColumn` / `RenameIndex`
-- To actually drop something, add the key to the allow-list **with a comment stating why
-  nothing is lost**
-- Stale allow-list entries matching no migration must be reported, or the gate quietly rots
-- Support `--validate-only` (for CI) and `--allow-data-loss` (explicit override)
+If the discriminator is already a string, nothing is at risk and no conversion is needed.
 
-## Deciding whether a column should exist
+## Renames are where data disappears
 
-Ask: **does it carry independent information?**
+Where the store has a schema, migration tooling generates the *shape difference* — and a
+rename looks exactly like "drop this, add that". EF scaffolds it as
+`DropTable + CreateTable` / `DropColumn + AddColumn`, leaves one line in the build log, and
+blocks nothing. **That loss raises no error**; by the time anyone notices there is nothing
+to recover.
 
-```
-QueueStatus  ⟺ Stopped: QueueStoppedAt is not null / Idle: QueueHead is null / otherwise
-SilentSince  ⟺ LastReportedAt + silence window (off by one sweep interval)
-```
+- Renames use the tooling's rename operation, never drop-and-create.
+- Put a gate somewhere the pipeline cannot bypass that fails on any destructive operation
+  not explicitly acknowledged, and make the acknowledgement state why nothing is lost.
+- A schemaless store does not escape this — it moves the problem to the reader, which must
+  keep understanding documents written under every past shape. That is why the read side
+  must be total (`pattern-matching.md`).
 
-If it reduces, it is bookkeeping, not information. Its cost is that every state change must
-remember to update two places, and a missed update raises nothing. Confirm every read site
-before dropping it, and leave that derivation in the allow-list comment afterwards.
+Whether a field should exist at all is a modelling question, not a storage one — see
+`domain-modeling.md`.
 
-## The migration that renames types but not tables
+## When the mapping changes but the storage does not
 
-When the domain and rows are split, the mapped CLR type names change while table and column
-names do not. EF's model snapshot records entity type names, so **generate a migration with
-empty Up/Down** to refresh the snapshot.
+Splitting the domain from the stored shape renames the mapped types while table and field
+names stay put. If the tooling records type names in a model snapshot, it will see a
+difference and want to generate something.
 
-Without it, the next person running `migrations add` finds this rename appearing inside
-their own change and has to work out whether they caused it. Say in the migration file why
-it is empty.
+Generate that migration deliberately, with an empty up and down, and say in it why it is
+empty. Otherwise the next person finds the rename inside *their* change and has to work out
+whether they caused it.
+
+## Reads do not go through the aggregate
+
+Lists, details and status lookups project straight from the store: no tracking, no children,
+no aggregate assembly. Loading an aggregate buys write-side consistency — concurrency token,
+change tracking, child collections — and a page of list rows needs none of it.
+See `layering.md`.

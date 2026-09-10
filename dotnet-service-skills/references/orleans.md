@@ -40,6 +40,24 @@ Three constraints come with it:
    dispatcher too and it queues behind that 300-second dispatch — which is exactly the
    problem the split was meant to solve.
 
+## What preceded a long wait may no longer be true
+
+Moving the wait off the aggregate grain fixes the blocking, not the staleness. During a
+multi-minute call the grain stays open to everyone else: the user can cancel, a sweeper can
+declare the work dead, the queue can stop.
+
+So on every path that resumes after a long wait, ask: **when this response arrives, does its
+object still want it?**
+
+```csharp
+var unwanted = job.IsDeleted || !step.IsActive || job.IsQueueStopped;
+```
+
+The defect this catches: a response lands after the work it describes is no longer wanted,
+and the handler records the id without advancing the state — so a later retry reads "no
+external side effects yet" and runs the same work a second time. Record the side effect that
+really happened, then apply whatever the object's state now calls for.
+
 ## Reminders vs timers
 
 | | Reminder | Timer |
@@ -75,10 +93,9 @@ Orleans Streams fit "one event, many subscribers, delivery must be durable". The
 
 - **Pushing to a single client connection.** Use SSE/WebSocket directly; a stream in the
   middle is one more hop.
-- **When the real event source is an external system.** Subscribing may have side effects.
-  A common shape: subscribing to a remote event feed also wakes a remote instance that had
-  been reclaimed, costing a multi-minute cold start. Pick an explicitly **side-effect-free**
-  read/liveness path instead of reusing the subscription that has side effects.
+- **When the real event source is an external system.** Subscribing may itself have side
+  effects — waking something that had been reclaimed, or extending a lease. Pick an
+  explicitly **side-effect-free** read/liveness path rather than reusing the subscription.
 - **Driving state.** State must be advanced by authoritative reports, never by replaying
   history. Archived/replayed events render the past; they must not set terminal states.
 

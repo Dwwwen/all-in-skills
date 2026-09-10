@@ -134,6 +134,39 @@ a terminal state", but is not: a head that stopped the queue is terminal yet sti
 its slot, and a step being cancelled has yielded its slot without an outcome yet. Store
 that one.
 
+## Do not let a signature force you to invent facts
+
+A `??` chain that bottoms out on an unrelated field is code pretending to know something:
+
+```csharp
+// Bad: with the first two absent, CreatedAt impersonates "last heard from the executor"
+var since = step.LastReportedAt ?? step.DispatchedAt ?? step.CreatedAt;
+```
+
+`CreatedAt` is not an execution signal in any sense, and the step that merely sat in a queue
+is now judged to have gone silent. The fix is not a better fallback — it is a signature that
+only accepts inputs which really did produce a signal:
+
+```csharp
+private bool HasSignalTimedOut(RemoteRun run, DateTimeOffset now) =>
+    now - (run.LastReportedAt ?? run.DispatchedAt) >= window;
+```
+
+Change the signature and the invented fallback disappears on its own. This is the same move
+as putting facts outside the union: make the caller pass the thing that exists.
+
+## The explanation lands with the state
+
+When an object carries two accounts of itself — one in the stage, one in a separate `Error`
+field — whoever reads one cannot see the other.
+
+```csharp
+public sealed record TimedOut(DateTimeOffset At, string? Note = null) : StepStage;
+```
+
+The case carries its own sentence, so no caller writes one on the side, and a stop reason
+taken from the step's own note beats "terminated with status Failed".
+
 ## Transitions live in Implementation
 
 ```csharp

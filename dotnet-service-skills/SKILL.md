@@ -66,8 +66,30 @@ should not know whether the backing store is blob storage or a queue);
 | Designing an aggregate, a state machine, records and unions | `references/domain-modeling.md` |
 | Writing matches; projecting domain → storage / wire | `references/pattern-matching.md` |
 | Deciding on actors, concurrency, reminders, timers, streams | `references/orleans.md` |
-| EF mapping, repositories over immutable aggregates, migrations | `references/persistence.md` |
-| Reviewing service code (yours or someone else's) | `references/review-heuristics.md` |
+| Storing an aggregate: the stored shape, repositories, schema changes | `references/persistence.md` |
+| Deciding what a comment should say, or trimming ones that say too much | `references/comments.md` |
+
+## Changing a model that already exists
+
+**Let the compiler be the checklist.** Delete the old API outright rather than marking it
+`[Obsolete]`, then work through the build errors. Each one is a decision worth re-making.
+Follow up with a `grep` to confirm nothing still bypasses the new path.
+
+**Where the compiler cannot help: a changed *meaning*.** Rename something and every call
+site breaks loudly. Redefine what a predicate means — "queue head" from *not finished* to
+*not yet dispatched* — and every site still compiles while quietly answering a different
+question. For a meaning change, `grep` every use and ask which question that site was
+asking; the ones that wanted the old meaning need the other predicate, not this one.
+
+**Rows already stored were written under the old rule.** A change that establishes a new
+invariant is right for everything it writes from now on and wrong for every existing record.
+Those records are not corrupt — they satisfy the *old* invariant, and nothing detects them
+because the shape did not change. Write the backfill in the same commit as the code.
+
+**Gates before it lands.** Build clean (zero warnings), tests green, and — if the store has
+a schema — the model and the migrations agree, with destructive operations acknowledged
+rather than scaffolded silently. The schema gates are the easiest to skip and they guard the
+least recoverable failures.
 
 ## Maintaining this skill
 
