@@ -136,6 +136,6 @@ whether they caused it.
 ## Reads do not go through the aggregate
 
 Lists, details and status lookups project straight from the store: no tracking, no children,
-no aggregate assembly. Loading an aggregate buys write-side consistency — concurrency token,
-change tracking, child collections — and a page of list rows needs none of it.
-See `layering.md`.
+no aggregate assembly. They live on the same repository as `Save` — the separation that
+matters is per method, not per type. `layering.md` has the shape and the staleness trap
+that makes tracked queries the wrong tool for a polling read.
