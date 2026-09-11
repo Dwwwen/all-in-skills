@@ -67,7 +67,7 @@ should not know whether the backing store is blob storage or a queue);
 | Writing matches; projecting domain → storage / wire | `references/pattern-matching.md` |
 | Deciding on actors, concurrency, reminders, timers, streams | `references/orleans.md` |
 | Storing an aggregate: the stored shape, repositories, schema changes | `references/persistence.md` |
-| Deciding what a comment should say, or trimming ones that say too much | `references/comments.md` |
+| Deciding what a comment should say, or trimming ones that say too much | the `code-comments` skill for the rules, `references/comments.md` for the C# specifics |
 
 ## Changing a model that already exists
 

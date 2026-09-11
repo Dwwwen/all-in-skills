@@ -5,6 +5,7 @@ Personal Claude Code skills. One directory per skill, each with a `SKILL.md` and
 
 | Skill | Scope |
 |---|---|
+| `code-comments` | What a comment should say, in any language: the test, what to keep, what to delete, why history belongs in the commit message |
 | `dotnet-service-skills` | .NET backend services: DDD layering, records and discriminated unions, pattern matching, Orleans, EF Core persistence and migration safety |
 
 ## Installing
@@ -17,14 +18,14 @@ Windows:
 
 ```powershell
 New-Item -ItemType Junction `
-  -Path   "$env:USERPROFILE\.claude\skills\dotnet-service-skills" `
-  -Target "<clone path>\skills\dotnet-service-skills"
+  -Path   "$env:USERPROFILE\.claude\skills\<skill>" `
+  -Target "<clone path>\skills\<skill>"
 ```
 
 macOS / Linux:
 
 ```bash
-ln -s "<clone path>/skills/dotnet-service-skills" ~/.claude/skills/dotnet-service-skills
+ln -s "<clone path>/skills/<skill>" ~/.claude/skills/<skill>
 ```
 
 A skill is not loaded on every turn. Claude sees each skill's `name` and `description`
