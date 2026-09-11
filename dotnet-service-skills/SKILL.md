@@ -41,22 +41,36 @@ and be cancelled.
 Application/
   Domain/<Aggregate>/
     JobTypes.cs             records + unions; data and pure derivations only
-    JobImplementation.cs    business: (Aggregate, args) -> Aggregate
+    JobImplementation.cs    business: (Aggregate, args) -> Aggregate — one per aggregate,
+                            even when it holds only a factory
     JobRules.cs             validation predicates (optional; split out when numerous)
     JobEvents.cs            domain events (optional)
-  Persistence/<Aggregate>/  ports: intent only, scalars only
-  UseCases/<Aggregate>/<use case>/
+  Repositories/<Aggregate>/ IJobRepository.cs — ports: intent only, scalars only
+    Models.cs               read models the port hands back; never a use case's DTO
+  UseCases/<Aggregate>/<UseCase>/
+                            Command/CommandHandler/Dtos (or Query/QueryHandler/Dtos);
+                            DTOs belong to the one use case, never shared
 Infrastructure/
-  Repositories/<Aggregate>/
+  Data/
+    AppDbContext.cs         the context, and every row it maps
     JobRow.cs               storage shape: mutable, trackable, all columns
+  Repositories/<Aggregate>/
+    JobRepository.cs        implements the port: aggregate read/write *and* projections
     RowConversions.cs       domain ⇄ row; the only place that knows column semantics
-    EfJobStore.cs           repository
-    EfJobQueries.cs         read side: AsNoTracking + projection, never via the aggregate
 ```
 
-The two naming axes are deliberate: **Application is named after the domain** (a port
-should not know whether the backing store is blob storage or a queue);
-**Infrastructure is named after the external system**.
+The two naming axes are deliberate, and they govern **`Services/`** — ports and adapters
+for external systems: **Application is named after the domain** (a port should not know
+whether the backing store is blob storage or a queue); **Infrastructure is named after the
+external system**.
+
+Repositories are the exception, named after the aggregate on both sides. The namespace
+already says which one is the adapter, so the implementation of `IJobRepository` is
+`JobRepository` — not `EfJobRepository`. A prefix carried by every type in a project
+distinguishes nothing.
+
+`Domain/` holds every persisted type, whether or not it has behaviour — see
+`layering.md` for why "just data" does not get a directory of its own.
 
 ## Where to go next
 
