@@ -1,6 +1,6 @@
 ---
 name: dotnet-service-skills
-description: Conventions for .NET backend services — DDD layering, aggregate design with records and discriminated unions, pattern matching, Orleans actor concurrency, EF Core persistence and migration safety. Use when structuring a service, modelling a state machine, deciding whether to use grains/reminders/streams, or reviewing service code.
+description: Conventions for .NET backend services — DDD layering, aggregates as records and discriminated unions, pattern matching, Orleans actor concurrency, EF Core persistence and migration safety, and what a comment should say. Use when writing or changing ANY service code, not only when designing something new: structuring a module, modelling a state machine, adding or refactoring a client, repository or handler, changing what an existing model means, reviewing a diff, or deciding whether a comment earns its place.
 ---
 
 # .NET service conventions
